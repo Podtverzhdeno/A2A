@@ -185,6 +185,7 @@ class SQLAlchemyDealStore:
                     updated_at=deal.updated_at,
                 )
                 session.add(row)
+                await session.flush()
                 existing_event_count = 0
             else:
                 existing_event_count = (

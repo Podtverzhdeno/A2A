@@ -15,6 +15,7 @@ from a2a.types.a2a_pb2 import (
     Role,
     SendMessageRequest,
 )
+from a2a.utils.errors import A2AError
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from google.protobuf.json_format import MessageToDict
@@ -155,7 +156,7 @@ def create_a1_app(a3_url: str | None = None) -> FastAPI:
                 response = await http.get(f"{a3_url}/api/v1/deals/{deal_id}")
                 response.raise_for_status()
                 return DealRecord.model_validate(response.json())
-        except (A2AClientError, httpx.HTTPError, ValueError) as exc:
+        except (A2AClientError, A2AError, httpx.HTTPError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/api/v1/deals", response_model=list[DealRecord])
