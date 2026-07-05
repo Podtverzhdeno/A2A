@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: a2a
+      POSTGRES_USER: a2a
+      POSTGRES_PASSWORD: a2a-demo-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U a2a -d a2a"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - a2a-postgres:/var/lib/postgresql/data
+
+  a2-1:
+    build: .
+    command: a2a-supplier
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8201
+      PUBLIC_URL: http://a2-1:8201
+      SUPPLIER_ID: supplier-a
+
+  a2-2:
+    build: .
+    command: a2a-supplier
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8202
+      PUBLIC_URL: http://a2-2:8202
+      SUPPLIER_ID: supplier-b
+
+  a2-3:
+    build: .
+    command: a2a-supplier
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8203
+      PUBLIC_URL: http://a2-3:8203
+      SUPPLIER_ID: supplier-c
+
+  a3:
+    build: .
+    command: sh -c "alembic upgrade head && a2a-api"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      a2-1:
+        condition: service_started
+      a2-2:
+        condition: service_started
+      a2-3:
+        condition: service_started
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      DATABASE_URL: postgresql+asyncpg://a2a:a2a-demo-password@postgres:5432/a2a
+      SUPPLIER_MODE: remote
+      SUPPLIER_ENDPOINTS: supplier-a=http://a2-1:8201,supplier-b=http://a2-2:8202,supplier-c=http://a2-3:8203
+      MINIMUM_QUOTES: 2
+      DEMO_IDENTITY_ENABLED: "true"
+      LLM_PROVIDER: ${LLM_PROVIDER:-disabled}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      OPENROUTER_APP_URL: ${OPENROUTER_APP_URL:-}
+      OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-}
+      GIGACHAT_CREDENTIALS: ${GIGACHAT_CREDENTIALS:-}
+      GIGACHAT_ACCESS_TOKEN: ${GIGACHAT_ACCESS_TOKEN:-}
+      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-}
+      GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-}
+      GIGACHAT_BASE_URL: ${GIGACHAT_BASE_URL:-}
+      GIGACHAT_CA_BUNDLE_FILE: ${GIGACHAT_CA_BUNDLE_FILE:-}
+      GIGACHAT_VERIFY_SSL_CERTS: ${GIGACHAT_VERIFY_SSL_CERTS:-true}
+    ports:
+      - "8000:8000"
+
+  a1:
+    build: .
+    command: a2a-client-agent
+    depends_on:
+      a3:
+        condition: service_started
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8100
+      PUBLIC_URL: http://a1:8100
+      A3_URL: http://a3:8000
+    ports:
+      - "8100:8100"
+
+  frontend:
+    build:
+      context: frontend
+    depends_on:
+      a1:
+        condition: service_started
+    ports:
+      - "8080:8080"
+
+volumes:
+  a2a-postgres:
