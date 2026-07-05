@@ -43,6 +43,7 @@ async def main() -> None:
             ApprovalRequest(
                 quote_id=deal.comparison.recommended_quote_id,
                 approved_by="ivan.petrov",
+                approval_snapshot_hash=deal.approval_snapshot.snapshot_hash,
             ),
         )
         print("=== Human-approved order and payment draft ===")

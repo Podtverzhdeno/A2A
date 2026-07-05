@@ -139,6 +139,12 @@ button.system-chip {
   color: var(--green-bright);
 }
 
+.demo-chip {
+  color: var(--amber);
+  border-color: rgb(245 189 99 / 30%);
+  background: rgb(245 189 99 / 8%);
+}
+
 .status-dot {
   width: 7px;
   height: 7px;
@@ -1060,6 +1066,71 @@ dd {
   color: var(--green-bright);
   font-size: 9px;
   overflow-wrap: anywhere;
+}
+
+.evidence-panel {
+  height: calc(100vh - 126px);
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.evidence-metric,
+.evidence-section,
+.outbox-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(9 16 14 / 42%);
+}
+
+.evidence-metric {
+  padding: 10px;
+}
+
+.evidence-metric span,
+.outbox-row small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.evidence-metric strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
+
+.evidence-section {
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.evidence-section > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.evidence-section code {
+  color: var(--green-bright);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.outbox-row {
+  padding: 8px;
+  margin-top: 6px;
+}
+
+.outbox-row span {
+  display: block;
+  font-size: 10px;
 }
 
 .tabs {

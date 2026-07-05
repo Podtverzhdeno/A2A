@@ -73,6 +73,9 @@ async def test_rest_deal_flow(container, deal_request) -> None:
             json={
                 "quote_id": payload["comparison"]["recommended_quote_id"],
                 "approved_by": "approver-1",
+                "approval_snapshot_hash": payload["approval_snapshot"][
+                    "snapshot_hash"
+                ],
             },
         )
         evidence = await client.get(
@@ -86,8 +89,23 @@ async def test_rest_deal_flow(container, deal_request) -> None:
     assert evidence.json()["approval_snapshot"]["snapshot_hash"]
     assert evidence.json()["fulfillment"][-1]["status"] == "completed"
     assert len(evidence.json()["documents"]) == 3
+    assert len(evidence.json()["outbox_messages"]) >= 4
     assert history.status_code == 200
     assert any(item["deal_id"] == payload["deal_id"] for item in history.json())
+
+
+async def test_readiness_reports_database_and_suppliers(container) -> None:
+    app = create_app(container)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert response.json()["checks"]["database"] is True
+    assert response.json()["checks"]["active_suppliers"] >= 2
 
 
 async def test_llm_endpoint_is_explicitly_unavailable_without_key(container) -> None:

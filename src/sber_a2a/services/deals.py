@@ -16,16 +16,20 @@ from sber_a2a.domain.models import (
     DealRecord,
     DealStatus,
     DocumentRef,
-    FulfillmentStatus,
     FulfillmentUpdate,
     OrderState,
     OrderStatus,
+    OutboxMessage,
     PaymentDraft,
     PaymentDraftStatus,
     Quote,
     utc_now,
 )
-from sber_a2a.integrations.contracts import OrderGateway
+from sber_a2a.integrations.contracts import (
+    DocumentGateway,
+    FulfillmentGateway,
+    OrderGateway,
+)
 from sber_a2a.services.store import DealNotFoundError, DealStore
 
 
@@ -39,10 +43,14 @@ class DealService:
         graph,
         store: DealStore,
         order_gateway: OrderGateway,
+        fulfillment_gateway: FulfillmentGateway,
+        document_gateway: DocumentGateway,
     ) -> None:
         self._graph = graph
         self._store = store
         self._order_gateway = order_gateway
+        self._fulfillment_gateway = fulfillment_gateway
+        self._document_gateway = document_gateway
         self._approval_lock = asyncio.Lock()
         self._background_tasks: set[asyncio.Task] = set()
 
@@ -120,8 +128,33 @@ class DealService:
         await self._store.put(deal)
         return deal
 
-    @staticmethod
-    def _record_from_state(draft: DealRecord, state: dict) -> DealRecord:
+    @classmethod
+    def _record_from_state(cls, draft: DealRecord, state: dict) -> DealRecord:
+        comparison = (
+            Comparison.model_validate(state["comparison"])
+            if state["comparison"]
+            else None
+        )
+        preview_snapshot = draft.approval_snapshot
+        if (
+            preview_snapshot is None
+            and comparison is not None
+            and comparison.recommended_quote_id is not None
+        ):
+            evaluated = next(
+                (
+                    item
+                    for item in comparison.evaluated_quotes
+                    if item.quote.quote_id == comparison.recommended_quote_id
+                ),
+                None,
+            )
+            if evaluated is not None and evaluated.eligible:
+                preview_deal = draft.model_copy(update={"comparison": comparison})
+                preview_snapshot = cls._build_approval_snapshot(
+                    preview_deal,
+                    evaluated,
+                )
         return DealRecord(
             deal_id=draft.deal_id,
             status=DealStatus(state["status"]),
@@ -129,11 +162,8 @@ class DealService:
             mandate=draft.mandate,
             supplier_ids=state["supplier_ids"],
             quotes=[Quote.model_validate(item) for item in state["quotes"]],
-            comparison=(
-                Comparison.model_validate(state["comparison"])
-                if state["comparison"]
-                else None
-            ),
+            comparison=comparison,
+            approval_snapshot=preview_snapshot,
             errors=state["errors"],
             events=[DealEvent.model_validate(item) for item in state["events"]],
             created_at=draft.created_at,
@@ -213,6 +243,9 @@ class DealService:
                 raise DealConflictError("Selected quote is missing or ineligible")
             if evaluated.quote.valid_until <= datetime.now(UTC):
                 raise DealConflictError("Selected quote has expired")
+            snapshot = self._build_approval_snapshot(deal, evaluated)
+            if approval.approval_snapshot_hash != snapshot.snapshot_hash:
+                raise DealConflictError("Approval snapshot hash does not match")
 
             created = await self._order_gateway.create_order_and_payment_draft(
                 deal,
@@ -221,7 +254,6 @@ class DealService:
             )
             order_id = created.order_id
             payment_draft_id = created.payment_draft_id
-            snapshot = self._build_approval_snapshot(deal, evaluated)
             now = utc_now()
             selected_supplier = evaluated.quote.supplier_id
             order = OrderState(
@@ -240,8 +272,14 @@ class DealService:
                 status=PaymentDraftStatus.AWAITING_CUSTOMER_CONFIRMATION,
                 created_at=now,
             )
-            fulfillment = self._build_demo_fulfillment(selected_supplier)
-            documents = self._build_demo_documents(deal_id, order_id, selected_supplier)
+            fulfillment = await self._fulfillment_gateway.create_demo_timeline(
+                supplier_id=selected_supplier,
+            )
+            documents = await self._document_gateway.create_demo_documents(
+                deal=deal,
+                quote=evaluated.quote,
+                order_id=order_id,
+            )
             lifecycle_events = self._build_lifecycle_events(
                 deal,
                 approval,
@@ -268,6 +306,16 @@ class DealService:
                 }
             )
             await self._store.put(updated)
+            await self._append_and_publish_outbox(
+                updated,
+                evaluated.quote,
+                snapshot,
+                rejected_suppliers=[
+                    supplier_id
+                    for supplier_id in deal.supplier_ids
+                    if supplier_id != selected_supplier
+                ],
+            )
             return ApprovalResult(
                 deal_id=deal_id,
                 status=updated.status,
@@ -311,49 +359,6 @@ class DealService:
             total_score=evaluated.total_score,
             snapshot_hash=hashlib.sha256(encoded).hexdigest(),
         )
-
-    @staticmethod
-    def _build_demo_fulfillment(supplier_id: str) -> list[FulfillmentUpdate]:
-        actor = f"A2:{supplier_id}"
-        steps = [
-            (FulfillmentStatus.ORDER_CONFIRMED, "Поставщик подтвердил заказ"),
-            (FulfillmentStatus.PACKED, "Товар зарезервирован и упакован"),
-            (FulfillmentStatus.SHIPPED, "Отгрузка передана в доставку"),
-            (FulfillmentStatus.DELIVERED, "Поставка доставлена покупателю"),
-            (FulfillmentStatus.DOCUMENTS_READY, "Закрывающие документы готовы"),
-            (FulfillmentStatus.COMPLETED, "Демонстрационное исполнение завершено"),
-        ]
-        return [
-            FulfillmentUpdate(
-                status=status,
-                actor=actor,
-                details={"description": description},
-            )
-            for status, description in steps
-        ]
-
-    @staticmethod
-    def _build_demo_documents(
-        deal_id: UUID,
-        order_id: UUID,
-        supplier_id: str,
-    ) -> list[DocumentRef]:
-        documents = [
-            ("invoice", "Счёт на оплату"),
-            ("waybill", "Транспортная накладная"),
-            ("acceptance_certificate", "Акт приёмки"),
-        ]
-        return [
-            DocumentRef(
-                document_type=document_type,
-                title=title,
-                source=f"mock-edo:{supplier_id}",
-                sha256=hashlib.sha256(
-                    f"{deal_id}:{order_id}:{supplier_id}:{document_type}".encode()
-                ).hexdigest(),
-            )
-            for document_type, title in documents
-        ]
 
     @staticmethod
     def _build_lifecycle_events(
@@ -449,6 +454,81 @@ class DealService:
             )
         )
         return events
+
+    async def _append_and_publish_outbox(
+        self,
+        deal: DealRecord,
+        quote: Quote,
+        snapshot: ApprovalSnapshot,
+        *,
+        rejected_suppliers: list[str],
+    ) -> None:
+        if deal.order_id is None or deal.payment_draft_id is None:
+            return
+        correlation_id = deal.events[-1].correlation_id if deal.events else uuid4()
+        messages = [
+            OutboxMessage(
+                aggregate_id=deal.deal_id,
+                recipient_agent_id=quote.supplier_id,
+                message_type="sber.procurement.award.v1",
+                idempotency_key=f"deal:{deal.deal_id}:award:{quote.supplier_id}",
+                correlation_id=correlation_id,
+                payload={
+                    "deal_id": str(deal.deal_id),
+                    "order_id": str(deal.order_id),
+                    "quote_id": str(quote.quote_id),
+                    "snapshot_hash": snapshot.snapshot_hash,
+                },
+            ),
+            *[
+                OutboxMessage(
+                    aggregate_id=deal.deal_id,
+                    recipient_agent_id=supplier_id,
+                    message_type="sber.procurement.rejection.v1",
+                    idempotency_key=(
+                        f"deal:{deal.deal_id}:rejection:{supplier_id}"
+                    ),
+                    correlation_id=correlation_id,
+                    payload={
+                        "deal_id": str(deal.deal_id),
+                        "selected_supplier_id": quote.supplier_id,
+                    },
+                )
+                for supplier_id in rejected_suppliers
+            ],
+            OutboxMessage(
+                aggregate_id=deal.deal_id,
+                recipient_agent_id="payment-adapter",
+                message_type="sber.procurement.payment_draft.v1",
+                idempotency_key=f"deal:{deal.deal_id}:payment-draft",
+                correlation_id=correlation_id,
+                payload={
+                    "deal_id": str(deal.deal_id),
+                    "payment_draft_id": str(deal.payment_draft_id),
+                    "amount": str(quote.total_cost),
+                    "currency": quote.currency,
+                },
+            ),
+            *[
+                OutboxMessage(
+                    aggregate_id=deal.deal_id,
+                    recipient_agent_id=document.source,
+                    message_type="sber.procurement.document_ref.v1",
+                    idempotency_key=(
+                        f"deal:{deal.deal_id}:document:{document.document_id}"
+                    ),
+                    correlation_id=correlation_id,
+                    payload=document.model_dump(mode="json"),
+                )
+                for document in deal.documents
+            ],
+        ]
+        append_outbox = getattr(self._store, "append_outbox", None)
+        mark_published = getattr(self._store, "mark_outbox_published", None)
+        if append_outbox is not None:
+            await append_outbox(messages)
+        if mark_published is not None:
+            await mark_published(deal.deal_id)
 
 
 __all__ = [

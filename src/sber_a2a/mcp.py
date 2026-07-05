@@ -79,11 +79,15 @@ def create_mcp_server(container: Container) -> FastMCP:
         approved_by: str,
     ) -> dict:
         """Authorize one eligible quote and create an order/payment draft."""
+        deal = await container.deals.get(UUID(deal_id))
+        if deal.approval_snapshot is None:
+            raise ValueError("Deal has no approval snapshot")
         result = await container.deals.approve(
             UUID(deal_id),
             ApprovalRequest(
                 quote_id=UUID(quote_id),
                 approved_by=approved_by,
+                approval_snapshot_hash=deal.approval_snapshot.snapshot_hash,
             ),
         )
         return result.model_dump(mode="json")

@@ -8,8 +8,9 @@ from sber_a2a.domain.models import (
     CreateOrganizationRequest,
     Organization,
     RegisterSupplierAgentRequest,
+    UpdateAgentStatusRequest,
 )
-from sber_a2a.services.store import SQLAlchemyDealStore
+from sber_a2a.services.store import DealNotFoundError, SQLAlchemyDealStore
 from sber_a2a.suppliers.mock import SupplierRegistry
 from sber_a2a.suppliers.remote import RemoteSupplierAgent
 
@@ -61,6 +62,26 @@ class AgentOnboardingService:
 
     async def list_agents(self) -> list[AgentRegistration]:
         return await self._store.list_agent_registrations()
+
+    async def update_agent_status(
+        self,
+        agent_id: str,
+        request: UpdateAgentStatusRequest,
+    ) -> AgentRegistration:
+        registrations = await self._store.list_agent_registrations()
+        registration = next(
+            (item for item in registrations if item.agent_id == agent_id),
+            None,
+        )
+        if registration is None:
+            raise DealNotFoundError(agent_id)
+        updated = registration.model_copy(update={"status": request.status})
+        await self._store.put_agent_registration(updated)
+        if request.status is AgentRegistrationStatus.ACTIVE:
+            self._registry.register(self._to_remote_agent(updated))
+        else:
+            self._registry.unregister(agent_id)
+        return updated
 
     async def restore(self) -> None:
         for registration in await self._store.list_agent_registrations():

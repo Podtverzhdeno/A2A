@@ -26,6 +26,7 @@ from sber_a2a.domain.models import (
     ParseIntentRequest,
     RegisterSupplierAgentRequest,
     SupplierSummary,
+    UpdateAgentStatusRequest,
 )
 from sber_a2a.mcp import create_mcp_server
 from sber_a2a.services.deals import DealConflictError
@@ -65,6 +66,23 @@ def create_app(container: Container | None = None) -> FastAPI:
             "role": "A3",
             "llm_enabled": container.llm.enabled,
             "llm_provider": container.llm.provider,
+        }
+
+    @app.get("/ready")
+    async def ready() -> dict:
+        checks: dict[str, bool | int] = {}
+        try:
+            await container.store.initialize()
+            checks["database"] = True
+        except Exception:
+            checks["database"] = False
+        suppliers = container.registry.list_suppliers()
+        checks["active_suppliers"] = len(suppliers)
+        ok = bool(checks["database"]) and len(suppliers) >= container.settings.minimum_quotes
+        return {
+            "status": "ready" if ok else "degraded",
+            "role": "A3",
+            "checks": checks,
         }
 
     @app.get("/api/v1/suppliers", response_model=list[SupplierSummary])
@@ -115,6 +133,19 @@ def create_app(container: Container | None = None) -> FastAPI:
     )
     async def list_registered_agents() -> list[AgentRegistration]:
         return await container.onboarding.list_agents()
+
+    @app.patch(
+        "/api/v1/admin/agents/{agent_id}/status",
+        response_model=AgentRegistration,
+    )
+    async def update_registered_agent_status(
+        agent_id: str,
+        request: UpdateAgentStatusRequest,
+    ) -> AgentRegistration:
+        try:
+            return await container.onboarding.update_agent_status(agent_id, request)
+        except DealNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Agent not found") from exc
 
     @app.post(
         "/api/v1/deals",
@@ -170,6 +201,11 @@ def create_app(container: Container | None = None) -> FastAPI:
             payment_draft=deal.payment_draft,
             fulfillment=deal.fulfillment,
             documents=deal.documents,
+            outbox_messages=(
+                await container.store.list_outbox(deal_id)
+                if hasattr(container.store, "list_outbox")
+                else []
+            ),
         )
 
     @app.get(

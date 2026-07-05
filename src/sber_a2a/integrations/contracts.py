@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
-from sber_a2a.domain.models import DealRecord, Quote
+from sber_a2a.domain.models import DealRecord, DocumentRef, FulfillmentUpdate, Quote
 
 
 @dataclass(frozen=True)
@@ -24,3 +24,21 @@ class OrderGateway(Protocol):
 
 class SupplierRiskGateway(Protocol):
     async def get_risk(self, supplier_id: str) -> Decimal: ...
+
+
+class FulfillmentGateway(Protocol):
+    async def create_demo_timeline(
+        self,
+        *,
+        supplier_id: str,
+    ) -> list[FulfillmentUpdate]: ...
+
+
+class DocumentGateway(Protocol):
+    async def create_demo_documents(
+        self,
+        *,
+        deal: DealRecord,
+        quote: Quote,
+        order_id: UUID,
+    ) -> list[DocumentRef]: ...

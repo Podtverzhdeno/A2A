@@ -11,6 +11,7 @@ import type {
   Deal,
   DealEvent,
   DealInput,
+  EvidenceBundle,
   EvaluatedQuote,
   Health,
   SupplierSummary
@@ -97,7 +98,10 @@ function App() {
   const [selectedQuote, setSelectedQuote] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"ledger" | "json">("ledger");
+  const [activeTab, setActiveTab] = useState<"ledger" | "evidence" | "json">(
+    "ledger"
+  );
+  const [evidence, setEvidence] = useState<EvidenceBundle | null>(null);
   const [clientLogs, setClientLogs] = useState<ClientLog[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -238,6 +242,19 @@ function App() {
     }
   };
 
+  const loadEvidence = async () => {
+    if (!deal) return;
+    try {
+      const result = await api.evidence(deal.deal_id);
+      setEvidence(result);
+      addClientLog("info", "Evidence bundle выгружен из A3");
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Не удалось выгрузить evidence"
+      );
+    }
+  };
+
   const approveQuote = async () => {
     if (!deal || !selectedQuote) return;
     setLoading(true);
@@ -247,7 +264,8 @@ function App() {
       const result = await api.approve(
         deal.deal_id,
         selectedQuote,
-        deal.mandate.authorized_by
+        deal.mandate.authorized_by,
+        deal.approval_snapshot?.snapshot_hash ?? ""
       );
       addClientLog(
         "success",
@@ -420,6 +438,7 @@ function App() {
                   disabled={
                     loading ||
                     deal.status !== "awaiting_approval" ||
+                    !deal.approval_snapshot?.snapshot_hash ||
                     !selectedEvaluation?.eligible
                   }
                   onClick={approveQuote}
@@ -450,6 +469,15 @@ function App() {
               Deal Ledger
             </button>
             <button
+              className={activeTab === "evidence" ? "active" : ""}
+              onClick={() => {
+                setActiveTab("evidence");
+                void loadEvidence();
+              }}
+            >
+              Evidence
+            </button>
+            <button
               className={activeTab === "json" ? "active" : ""}
               onClick={() => setActiveTab("json")}
             >
@@ -463,6 +491,8 @@ function App() {
               clientLogs={clientLogs}
               loading={loading}
             />
+          ) : activeTab === "evidence" ? (
+            <EvidencePanel evidence={evidence} deal={deal} onLoad={loadEvidence} />
           ) : (
             <pre className="raw-json">
               {deal
@@ -501,6 +531,7 @@ function Header({
           <span className={`status-dot ${health?.llm_enabled ? "llm" : "muted"}`} />
           LLM {health?.llm_enabled ? health.llm_provider : "disabled"}
         </div>
+        <div className="system-chip demo-chip">DEMO / MOCK</div>
         <a className="docs-link" href="/docs" target="_blank" rel="noreferrer">
           API docs ↗
         </a>
@@ -934,6 +965,76 @@ function EventLedger({
           </article>
         )}
       </div>
+    </div>
+  );
+}
+
+function EvidencePanel({
+  evidence,
+  deal,
+  onLoad
+}: {
+  evidence: EvidenceBundle | null;
+  deal: Deal | null;
+  onLoad: () => Promise<void>;
+}) {
+  if (!deal) {
+    return (
+      <div className="empty-logs">
+        <span>_</span>
+        <p>Создайте сделку, чтобы выгрузить evidence bundle</p>
+      </div>
+    );
+  }
+  if (!evidence) {
+    return (
+      <div className="evidence-panel">
+        <button className="primary-button" onClick={() => void onLoad()}>
+          Выгрузить evidence
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="evidence-panel">
+      <div className="ledger-header">
+        <div>
+          <p className="eyebrow">Audit export</p>
+          <h2>Evidence bundle</h2>
+        </div>
+        <button className="icon-button" onClick={() => void onLoad()} title="Обновить">
+          ↻
+        </button>
+      </div>
+      <div className="evidence-grid">
+        <EvidenceMetric label="Events" value={evidence.events.length} />
+        <EvidenceMetric label="Outbox" value={evidence.outbox_messages.length} />
+        <EvidenceMetric label="Docs" value={evidence.documents.length} />
+        <EvidenceMetric label="Fulfillment" value={evidence.fulfillment.length} />
+      </div>
+      <div className="evidence-section">
+        <strong>Snapshot hash</strong>
+        <code>{evidence.approval_snapshot?.snapshot_hash ?? "—"}</code>
+      </div>
+      <div className="evidence-section">
+        <strong>Outbox messages</strong>
+        {evidence.outbox_messages.map((message) => (
+          <div className="outbox-row" key={message.outbox_id}>
+            <span>{message.message_type}</span>
+            <small>{message.recipient_agent_id}</small>
+            <code>{message.status}</code>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="evidence-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }

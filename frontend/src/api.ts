@@ -2,6 +2,7 @@ import type {
   ApprovalResult,
   Deal,
   DealInput,
+  EvidenceBundle,
   Health,
   SupplierSummary
 } from "./types";
@@ -41,6 +42,9 @@ export const api = {
   getDeal: (dealId: string) =>
     request<Deal>(`/api/v1/deals/${dealId}`),
 
+  evidence: (dealId: string) =>
+    request<EvidenceBundle>(`/api/v1/deals/${dealId}/evidence`),
+
   createDeal: (input: DealInput) =>
     request<Deal>("/api/v1/deals", {
       method: "POST",
@@ -68,12 +72,18 @@ export const api = {
       })
     }),
 
-  approve: (dealId: string, quoteId: string, approvedBy: string) =>
+  approve: (
+    dealId: string,
+    quoteId: string,
+    approvedBy: string,
+    approvalSnapshotHash: string
+  ) =>
     request<ApprovalResult>(`/api/v1/deals/${dealId}/approve`, {
       method: "POST",
       body: JSON.stringify({
         quote_id: quoteId,
-        approved_by: approvedBy
+        approved_by: approvedBy,
+        approval_snapshot_hash: approvalSnapshotHash
       })
     })
 };

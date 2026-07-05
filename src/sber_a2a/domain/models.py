@@ -1,3 +1,5 @@
+import hashlib
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -162,10 +164,32 @@ class Comparison(BaseModel):
 
 
 class DealEvent(BaseModel):
+    event_id: UUID = Field(default_factory=uuid4)
     event_type: str
     actor: str
     details: dict[str, Any] = Field(default_factory=dict)
+    correlation_id: UUID = Field(default_factory=uuid4)
+    causation_id: UUID | None = None
+    message_id: UUID = Field(default_factory=uuid4)
+    payload_hash: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def set_payload_hash(self) -> "DealEvent":
+        if self.payload_hash is None:
+            payload = {
+                "event_type": self.event_type,
+                "actor": self.actor,
+                "details": self.details,
+            }
+            encoded = json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode()
+            self.payload_hash = hashlib.sha256(encoded).hexdigest()
+        return self
 
 
 class ApprovalSnapshot(BaseModel):
@@ -246,6 +270,7 @@ class DealRecord(BaseModel):
 class ApprovalRequest(BaseModel):
     quote_id: UUID
     approved_by: str = Field(min_length=2, max_length=100)
+    approval_snapshot_hash: str = Field(min_length=64, max_length=64)
 
 
 class ApprovalResult(BaseModel):
@@ -265,6 +290,27 @@ class EvidenceBundle(BaseModel):
     payment_draft: PaymentDraft | None
     fulfillment: list[FulfillmentUpdate]
     documents: list[DocumentRef]
+    outbox_messages: list["OutboxMessage"] = Field(default_factory=list)
+
+
+class OutboxStatus(StrEnum):
+    PENDING = "pending"
+    PUBLISHED = "published"
+
+
+class OutboxMessage(BaseModel):
+    outbox_id: UUID = Field(default_factory=uuid4)
+    aggregate_id: UUID
+    recipient_agent_id: str
+    message_type: str
+    idempotency_key: str
+    payload: dict[str, Any]
+    status: OutboxStatus = OutboxStatus.PENDING
+    attempts: int = 0
+    correlation_id: UUID
+    causation_id: UUID | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    published_at: datetime | None = None
 
 
 class ParseIntentRequest(BaseModel):
@@ -292,6 +338,10 @@ class AgentRegistrationStatus(StrEnum):
     ACTIVE = "active"
     SUSPENDED = "suspended"
     REVOKED = "revoked"
+
+
+class UpdateAgentStatusRequest(BaseModel):
+    status: AgentRegistrationStatus
 
 
 class AgentHostingMode(StrEnum):

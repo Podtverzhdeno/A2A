@@ -13,7 +13,11 @@ async def test_authorized_human_creates_one_order_and_payment_draft(
 
     result = await container.deals.approve(
         deal.deal_id,
-        ApprovalRequest(quote_id=quote_id, approved_by="approver-1"),
+        ApprovalRequest(
+            quote_id=quote_id,
+            approved_by="approver-1",
+            approval_snapshot_hash=deal.approval_snapshot.snapshot_hash,
+        ),
     )
 
     assert result.status is DealStatus.COMPLETED
@@ -34,7 +38,11 @@ async def test_authorized_human_creates_one_order_and_payment_draft(
 
     repeated = await container.deals.approve(
         deal.deal_id,
-        ApprovalRequest(quote_id=quote_id, approved_by="approver-1"),
+        ApprovalRequest(
+            quote_id=quote_id,
+            approved_by="approver-1",
+            approval_snapshot_hash=deal.approval_snapshot.snapshot_hash,
+        ),
     )
     assert repeated.order_id == result.order_id
     assert repeated.payment_draft_id == result.payment_draft_id
@@ -53,5 +61,23 @@ async def test_unauthorized_human_cannot_approve(
             ApprovalRequest(
                 quote_id=deal.comparison.recommended_quote_id,
                 approved_by="unknown-user",
+                approval_snapshot_hash=deal.approval_snapshot.snapshot_hash,
+            ),
+        )
+
+
+async def test_approval_requires_current_snapshot_hash(
+    container,
+    deal_request,
+) -> None:
+    deal = await container.deals.create(deal_request)
+
+    with pytest.raises(DealConflictError, match="snapshot hash"):
+        await container.deals.approve(
+            deal.deal_id,
+            ApprovalRequest(
+                quote_id=deal.comparison.recommended_quote_id,
+                approved_by="approver-1",
+                approval_snapshot_hash="0" * 64,
             ),
         )

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Sequence
 from datetime import datetime
@@ -10,7 +12,14 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from sber_a2a.domain.models import AgentRegistration, DealRecord, Organization
+from sber_a2a.domain.models import (
+    AgentRegistration,
+    DealRecord,
+    Organization,
+    OutboxMessage,
+    OutboxStatus,
+    utc_now,
+)
 
 
 class DealNotFoundError(KeyError):
@@ -93,6 +102,7 @@ class DealEventRow(Base):
     )
 
     event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_uuid: Mapped[str] = mapped_column(String(36))
     deal_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("deals.deal_id", ondelete="CASCADE"),
@@ -102,7 +112,31 @@ class DealEventRow(Base):
     event_type: Mapped[str] = mapped_column(String(100), index=True)
     actor: Mapped[str] = mapped_column(String(200))
     details: Mapped[dict] = mapped_column(JSON)
+    correlation_id: Mapped[str] = mapped_column(String(36))
+    causation_id: Mapped[str | None] = mapped_column(String(36))
+    message_id: Mapped[str] = mapped_column(String(36))
+    payload_hash: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class OutboxMessageRow(Base):
+    __tablename__ = "outbox_messages"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_outbox_idempotency_key"),
+    )
+
+    outbox_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    aggregate_id: Mapped[str] = mapped_column(String(36), index=True)
+    recipient_agent_id: Mapped[str] = mapped_column(String(100), index=True)
+    message_type: Mapped[str] = mapped_column(String(100), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    attempts: Mapped[int] = mapped_column(Integer)
+    correlation_id: Mapped[str] = mapped_column(String(36))
+    causation_id: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class OrganizationRow(Base):
@@ -210,10 +244,17 @@ class SQLAlchemyDealStore:
                 session.add(
                     DealEventRow(
                         deal_id=deal_id,
+                        event_uuid=str(event.event_id),
                         sequence_number=sequence_number,
                         event_type=event.event_type,
                         actor=event.actor,
                         details=event.details,
+                        correlation_id=str(event.correlation_id),
+                        causation_id=(
+                            str(event.causation_id) if event.causation_id else None
+                        ),
+                        message_id=str(event.message_id),
+                        payload_hash=event.payload_hash,
                         created_at=event.created_at,
                     )
                 )
@@ -255,14 +296,100 @@ class SQLAlchemyDealStore:
         payload = dict(row.payload)
         payload["events"] = [
             {
+                "event_id": event.event_uuid,
                 "event_type": event.event_type,
                 "actor": event.actor,
                 "details": event.details,
+                "correlation_id": event.correlation_id,
+                "causation_id": event.causation_id,
+                "message_id": event.message_id,
+                "payload_hash": event.payload_hash,
                 "created_at": event.created_at,
             }
             for event in event_rows
         ]
         return DealRecord.model_validate(payload)
+
+    async def append_outbox(self, messages: list[OutboxMessage]) -> None:
+        if not messages:
+            return
+        await self.initialize()
+        async with self._sessions.begin() as session:
+            for message in messages:
+                existing = (
+                    await session.execute(
+                        select(OutboxMessageRow).where(
+                            OutboxMessageRow.idempotency_key
+                            == message.idempotency_key
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing is not None:
+                    continue
+                session.add(
+                    OutboxMessageRow(
+                        outbox_id=str(message.outbox_id),
+                        aggregate_id=str(message.aggregate_id),
+                        recipient_agent_id=message.recipient_agent_id,
+                        message_type=message.message_type,
+                        idempotency_key=message.idempotency_key,
+                        payload=message.payload,
+                        status=message.status.value,
+                        attempts=message.attempts,
+                        correlation_id=str(message.correlation_id),
+                        causation_id=(
+                            str(message.causation_id)
+                            if message.causation_id
+                            else None
+                        ),
+                        created_at=message.created_at,
+                        published_at=message.published_at,
+                    )
+                )
+
+    async def list_outbox(self, aggregate_id: UUID | None = None) -> list[OutboxMessage]:
+        await self.initialize()
+        statement = select(OutboxMessageRow).order_by(OutboxMessageRow.created_at)
+        if aggregate_id is not None:
+            statement = statement.where(
+                OutboxMessageRow.aggregate_id == str(aggregate_id)
+            )
+        async with self._sessions() as session:
+            rows = (await session.execute(statement)).scalars().all()
+            return [
+                OutboxMessage(
+                    outbox_id=row.outbox_id,
+                    aggregate_id=row.aggregate_id,
+                    recipient_agent_id=row.recipient_agent_id,
+                    message_type=row.message_type,
+                    idempotency_key=row.idempotency_key,
+                    payload=row.payload,
+                    status=OutboxStatus(row.status),
+                    attempts=row.attempts,
+                    correlation_id=row.correlation_id,
+                    causation_id=row.causation_id,
+                    created_at=row.created_at,
+                    published_at=row.published_at,
+                )
+                for row in rows
+            ]
+
+    async def mark_outbox_published(self, aggregate_id: UUID) -> None:
+        await self.initialize()
+        async with self._sessions.begin() as session:
+            rows = (
+                await session.execute(
+                    select(OutboxMessageRow).where(
+                        OutboxMessageRow.aggregate_id == str(aggregate_id),
+                        OutboxMessageRow.status == OutboxStatus.PENDING.value,
+                    )
+                )
+            ).scalars().all()
+            now = utc_now()
+            for row in rows:
+                row.status = OutboxStatus.PUBLISHED.value
+                row.attempts += 1
+                row.published_at = now
 
     async def put_organization(self, organization: Organization) -> None:
         await self.initialize()

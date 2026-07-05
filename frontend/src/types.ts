@@ -190,3 +190,29 @@ export interface ApprovalResult {
   payment_draft_id: string;
   approval_snapshot_hash: string;
 }
+
+export interface OutboxMessage {
+  outbox_id: string;
+  aggregate_id: string;
+  recipient_agent_id: string;
+  message_type: string;
+  idempotency_key: string;
+  payload: Record<string, unknown>;
+  status: "pending" | "published";
+  attempts: number;
+  correlation_id: string;
+  causation_id: string | null;
+  created_at: string;
+  published_at: string | null;
+}
+
+export interface EvidenceBundle {
+  deal: Deal;
+  events: DealEvent[];
+  approval_snapshot: ApprovalSnapshot | null;
+  order: OrderState | null;
+  payment_draft: PaymentDraft | null;
+  fulfillment: FulfillmentUpdate[];
+  documents: DocumentRef[];
+  outbox_messages: OutboxMessage[];
+}

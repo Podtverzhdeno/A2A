@@ -1,8 +1,18 @@
 from dataclasses import dataclass
 
 from sber_a2a.config import Settings, get_settings
-from sber_a2a.integrations.contracts import OrderGateway, SupplierRiskGateway
-from sber_a2a.integrations.mock import MockOrderGateway, MockSupplierRiskGateway
+from sber_a2a.integrations.contracts import (
+    DocumentGateway,
+    FulfillmentGateway,
+    OrderGateway,
+    SupplierRiskGateway,
+)
+from sber_a2a.integrations.mock import (
+    MockDocumentGateway,
+    MockFulfillmentGateway,
+    MockOrderGateway,
+    MockSupplierRiskGateway,
+)
 from sber_a2a.services.deals import DealService
 from sber_a2a.services.llm import LanguageModelService
 from sber_a2a.services.onboarding import AgentOnboardingService
@@ -21,6 +31,8 @@ class Container:
     store: SQLAlchemyDealStore
     order_gateway: OrderGateway
     risk_gateway: SupplierRiskGateway
+    fulfillment_gateway: FulfillmentGateway
+    document_gateway: DocumentGateway
     onboarding: AgentOnboardingService
 
 
@@ -43,6 +55,8 @@ def build_container(settings: Settings | None = None) -> Container:
     llm = LanguageModelService(settings)
     store = SQLAlchemyDealStore(settings.database_url)
     risk_gateway = MockSupplierRiskGateway()
+    fulfillment_gateway = MockFulfillmentGateway()
+    document_gateway = MockDocumentGateway()
     graph = build_procurement_graph(
         registry,
         llm,
@@ -60,9 +74,17 @@ def build_container(settings: Settings | None = None) -> Container:
         settings=settings,
         registry=registry,
         llm=llm,
-        deals=DealService(graph, store, order_gateway),
+        deals=DealService(
+            graph,
+            store,
+            order_gateway,
+            fulfillment_gateway,
+            document_gateway,
+        ),
         store=store,
         order_gateway=order_gateway,
         risk_gateway=risk_gateway,
+        fulfillment_gateway=fulfillment_gateway,
+        document_gateway=document_gateway,
         onboarding=onboarding,
     )

@@ -175,6 +175,15 @@ def create_a1_app(a3_url: str | None = None) -> FastAPI:
             response.raise_for_status()
             return DealRecord.model_validate(response.json())
 
+    @app.get("/api/v1/deals/{deal_id}/evidence")
+    async def get_evidence(deal_id: UUID) -> dict:
+        async with httpx.AsyncClient(timeout=5) as http:
+            response = await http.get(f"{a3_url}/api/v1/deals/{deal_id}/evidence")
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail="Deal not found")
+            response.raise_for_status()
+            return response.json()
+
     @app.post(
         "/api/v1/deals/{deal_id}/approve",
         response_model=ApprovalResult,
