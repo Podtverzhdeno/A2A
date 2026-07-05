@@ -373,6 +373,16 @@ dd {
   background: rgb(32 212 123 / 12%);
 }
 
+.status-fulfilling {
+  color: var(--cyan);
+  background: rgb(89 216 199 / 12%);
+}
+
+.status-completed {
+  color: var(--green-bright);
+  background: rgb(32 212 123 / 16%);
+}
+
 .status-failed {
   color: var(--red);
   background: rgb(255 107 120 / 12%);
@@ -933,8 +943,8 @@ dd {
   margin-top: 16px;
   padding: 18px;
   display: grid;
-  grid-template-columns: 44px 1fr 220px;
-  align-items: center;
+  grid-template-columns: 44px minmax(220px, 1fr) 260px;
+  align-items: start;
   gap: 15px;
   border: 1px solid rgb(32 212 123 / 30%);
   border-radius: 12px;
@@ -965,6 +975,91 @@ dd {
 
 .order-result dl {
   margin: 0;
+}
+
+.snapshot-panel,
+.fulfillment-panel,
+.document-panel {
+  grid-column: 1 / -1;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.snapshot-panel h3,
+.fulfillment-panel h3,
+.document-panel h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+
+.snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.snapshot-grid span,
+.document-row {
+  min-height: 32px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(9 16 14 / 42%);
+  font-size: 10px;
+}
+
+.fulfillment-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fulfillment-step {
+  min-height: 48px;
+  padding: 8px;
+  display: flex;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(9 16 14 / 42%);
+}
+
+.fulfillment-step > span {
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 10px rgb(32 212 123 / 45%);
+  flex: 0 0 auto;
+}
+
+.fulfillment-step strong,
+.document-row strong {
+  display: block;
+  font-size: 10px;
+}
+
+.fulfillment-step small,
+.document-row span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.document-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.document-row code {
+  display: block;
+  margin-top: 5px;
+  color: var(--green-bright);
+  font-size: 9px;
+  overflow-wrap: anywhere;
 }
 
 .tabs {

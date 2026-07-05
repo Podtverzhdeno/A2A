@@ -39,7 +39,15 @@ const EVENT_LABELS: Record<string, string> = {
   workflow_completed: "Workflow завершён",
   supplier_request_failed: "Поставщик не ответил",
   workflow_failed: "Workflow завершился с ошибкой",
+  approval_snapshot_created: "Зафиксирован снимок условий",
   quote_approved: "Оферта подтверждена",
+  award_sent: "Award отправлен выбранному A2",
+  supplier_rejected: "Невыбранный A2 уведомлён",
+  order_confirmed: "A2 подтвердил заказ",
+  payment_draft_created: "Черновик платежа создан",
+  fulfillment_updated: "Статус исполнения обновлён",
+  document_registered: "Документ зарегистрирован",
+  deal_completed: "Сделка завершена",
   order_created: "Заказ создан"
 };
 
@@ -47,6 +55,8 @@ const STATUS_LABELS = {
   draft: "Черновик",
   awaiting_approval: "Ожидает подтверждения",
   order_created: "Заказ создан",
+  fulfilling: "Исполнение",
+  completed: "Завершена",
   failed: "Ошибка"
 } as const;
 
@@ -241,7 +251,9 @@ function App() {
       );
       addClientLog(
         "success",
-        `Создан заказ ${shortId(result.order_id)} и платёжный черновик`
+        `Создан заказ ${shortId(result.order_id)}, snapshot ${shortId(
+          result.approval_snapshot_hash
+        )}`
       );
       const refreshed = await api.getDeal(deal.deal_id);
       setDeal(refreshed);
@@ -413,12 +425,16 @@ function App() {
                   onClick={approveQuote}
                 >
                   {deal.status === "order_created"
-                    ? "Заказ уже создан"
+                  || deal.status === "completed"
+                  || deal.status === "fulfilling"
+                    ? "Сделка уже оформлена"
                     : "Подтвердить и создать заказ"}
                 </button>
               </div>
 
-              {deal.status === "order_created" && (
+              {(deal.status === "order_created" ||
+                deal.status === "fulfilling" ||
+                deal.status === "completed") && (
                 <OrderResult deal={deal} />
               )}
             </>
@@ -923,15 +939,18 @@ function EventLedger({
 }
 
 function OrderResult({ deal }: { deal: Deal }) {
+  const snapshot = deal.approval_snapshot;
+  const payment = deal.payment_draft;
   return (
     <section className="order-result">
       <div className="success-icon">✓</div>
       <div>
         <p className="eyebrow">Transaction result</p>
-        <h2>Заказ успешно создан</h2>
+        <h2>Сделка оформлена и исполнена в demo-контуре</h2>
         <p>
-          Платёж не выполнен автоматически — сформирован только черновик для
-          штатного подтверждения.
+          A3 отправил award выбранному A2, уведомил остальных поставщиков,
+          получил mock-исполнение и зарегистрировал документы. Платёж не
+          выполнен автоматически — сформирован только черновик.
         </p>
       </div>
       <dl>
@@ -945,7 +964,54 @@ function OrderResult({ deal }: { deal: Deal }) {
             {shortId(deal.payment_draft_id)}
           </dd>
         </div>
+        <div>
+          <dt>Snapshot hash</dt>
+          <dd title={snapshot?.snapshot_hash ?? ""}>
+            {shortId(snapshot?.snapshot_hash)}
+          </dd>
+        </div>
+        <div>
+          <dt>Payment status</dt>
+          <dd>{payment?.status ?? "—"}</dd>
+        </div>
       </dl>
+      {snapshot && (
+        <div className="snapshot-panel">
+          <h3>Approval snapshot</h3>
+          <div className="snapshot-grid">
+            <span>{snapshot.supplier_name}</span>
+            <span>{formatMoney(snapshot.total_cost, snapshot.currency)}</span>
+            <span>{snapshot.delivery_days} дн.</span>
+            <span>{snapshot.warranty_months} мес.</span>
+          </div>
+        </div>
+      )}
+      <div className="fulfillment-panel">
+        <h3>Fulfillment</h3>
+        <div className="fulfillment-list">
+          {deal.fulfillment.map((item) => (
+            <div className="fulfillment-step" key={`${item.status}-${item.created_at}`}>
+              <span />
+              <div>
+                <strong>{item.status}</strong>
+                <small>{String(item.details.description ?? item.actor)}</small>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="document-panel">
+        <h3>Mock documents</h3>
+        <div className="document-list">
+          {deal.documents.map((document) => (
+            <div className="document-row" key={document.document_id}>
+              <strong>{document.title}</strong>
+              <span>{document.document_type}</span>
+              <code title={document.sha256}>{shortId(document.sha256)}</code>
+            </div>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }

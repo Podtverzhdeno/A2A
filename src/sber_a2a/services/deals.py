@@ -1,15 +1,27 @@
+from __future__ import annotations
+
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sber_a2a.domain.models import (
     ApprovalRequest,
     ApprovalResult,
+    ApprovalSnapshot,
     Comparison,
     CreateDealRequest,
     DealEvent,
     DealRecord,
     DealStatus,
+    DocumentRef,
+    FulfillmentStatus,
+    FulfillmentUpdate,
+    OrderState,
+    OrderStatus,
+    PaymentDraft,
+    PaymentDraftStatus,
     Quote,
     utc_now,
 )
@@ -156,7 +168,7 @@ class DealService:
     ) -> ApprovalResult:
         async with self._approval_lock:
             deal = await self._store.get(deal_id)
-            if deal.status is DealStatus.ORDER_CREATED:
+            if deal.status in {DealStatus.ORDER_CREATED, DealStatus.COMPLETED}:
                 if (
                     deal.selected_quote_id == approval.quote_id
                     and deal.order_id is not None
@@ -168,6 +180,11 @@ class DealService:
                         selected_quote_id=approval.quote_id,
                         order_id=deal.order_id,
                         payment_draft_id=deal.payment_draft_id,
+                        approval_snapshot_hash=(
+                            deal.approval_snapshot.snapshot_hash
+                            if deal.approval_snapshot
+                            else ""
+                        ),
                     )
                 raise DealConflictError("Deal already has a different order")
             if deal.status is not DealStatus.AWAITING_APPROVAL:
@@ -204,29 +221,50 @@ class DealService:
             )
             order_id = created.order_id
             payment_draft_id = created.payment_draft_id
+            snapshot = self._build_approval_snapshot(deal, evaluated)
+            now = utc_now()
+            selected_supplier = evaluated.quote.supplier_id
+            order = OrderState(
+                order_id=order_id,
+                supplier_id=selected_supplier,
+                quote_id=approval.quote_id,
+                status=OrderStatus.CONFIRMED_BY_SUPPLIER,
+                confirmed_at=now,
+            )
+            payment_draft = PaymentDraft(
+                payment_draft_id=payment_draft_id,
+                order_id=order_id,
+                amount=evaluated.quote.total_cost,
+                currency=evaluated.quote.currency,
+                payee_supplier_id=selected_supplier,
+                status=PaymentDraftStatus.AWAITING_CUSTOMER_CONFIRMATION,
+                created_at=now,
+            )
+            fulfillment = self._build_demo_fulfillment(selected_supplier)
+            documents = self._build_demo_documents(deal_id, order_id, selected_supplier)
+            lifecycle_events = self._build_lifecycle_events(
+                deal,
+                approval,
+                snapshot,
+                order_id,
+                payment_draft_id,
+                selected_supplier,
+                fulfillment,
+                documents,
+            )
             updated = deal.model_copy(
                 update={
-                    "status": DealStatus.ORDER_CREATED,
+                    "status": DealStatus.COMPLETED,
                     "selected_quote_id": approval.quote_id,
                     "order_id": order_id,
                     "payment_draft_id": payment_draft_id,
+                    "approval_snapshot": snapshot,
+                    "order": order,
+                    "payment_draft": payment_draft,
+                    "fulfillment": fulfillment,
+                    "documents": documents,
                     "updated_at": utc_now(),
-                    "events": [
-                        *deal.events,
-                        DealEvent(
-                            event_type="quote_approved",
-                            actor=f"human:{approval.approved_by}",
-                            details={"quote_id": str(approval.quote_id)},
-                        ),
-                        DealEvent(
-                            event_type="order_created",
-                            actor="A3:sber",
-                            details={
-                                "order_id": str(order_id),
-                                "payment_draft_id": str(payment_draft_id),
-                            },
-                        ),
-                    ],
+                    "events": [*deal.events, *lifecycle_events],
                 }
             )
             await self._store.put(updated)
@@ -236,7 +274,181 @@ class DealService:
                 selected_quote_id=approval.quote_id,
                 order_id=order_id,
                 payment_draft_id=payment_draft_id,
+                approval_snapshot_hash=snapshot.snapshot_hash,
             )
+
+    @staticmethod
+    def _build_approval_snapshot(deal: DealRecord, evaluated) -> ApprovalSnapshot:
+        quote = evaluated.quote
+        payload = {
+            "deal_id": str(deal.deal_id),
+            "quote_id": str(quote.quote_id),
+            "supplier_id": quote.supplier_id,
+            "sku": quote.sku,
+            "quantity": quote.quantity,
+            "total_cost": str(quote.total_cost),
+            "currency": quote.currency,
+            "delivery_days": quote.delivery_days,
+            "warranty_months": quote.warranty_months,
+            "payment_delay_days": quote.payment_delay_days,
+            "ranking_version": deal.comparison.ranking_version if deal.comparison else "",
+            "total_score": str(evaluated.total_score) if evaluated.total_score else None,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return ApprovalSnapshot(
+            quote_id=quote.quote_id,
+            supplier_id=quote.supplier_id,
+            supplier_name=quote.supplier_name,
+            sku=quote.sku,
+            product_name=quote.product_name,
+            quantity=quote.quantity,
+            total_cost=quote.total_cost,
+            currency=quote.currency,
+            delivery_days=quote.delivery_days,
+            warranty_months=quote.warranty_months,
+            payment_delay_days=quote.payment_delay_days,
+            ranking_version=payload["ranking_version"],
+            total_score=evaluated.total_score,
+            snapshot_hash=hashlib.sha256(encoded).hexdigest(),
+        )
+
+    @staticmethod
+    def _build_demo_fulfillment(supplier_id: str) -> list[FulfillmentUpdate]:
+        actor = f"A2:{supplier_id}"
+        steps = [
+            (FulfillmentStatus.ORDER_CONFIRMED, "Поставщик подтвердил заказ"),
+            (FulfillmentStatus.PACKED, "Товар зарезервирован и упакован"),
+            (FulfillmentStatus.SHIPPED, "Отгрузка передана в доставку"),
+            (FulfillmentStatus.DELIVERED, "Поставка доставлена покупателю"),
+            (FulfillmentStatus.DOCUMENTS_READY, "Закрывающие документы готовы"),
+            (FulfillmentStatus.COMPLETED, "Демонстрационное исполнение завершено"),
+        ]
+        return [
+            FulfillmentUpdate(
+                status=status,
+                actor=actor,
+                details={"description": description},
+            )
+            for status, description in steps
+        ]
+
+    @staticmethod
+    def _build_demo_documents(
+        deal_id: UUID,
+        order_id: UUID,
+        supplier_id: str,
+    ) -> list[DocumentRef]:
+        documents = [
+            ("invoice", "Счёт на оплату"),
+            ("waybill", "Транспортная накладная"),
+            ("acceptance_certificate", "Акт приёмки"),
+        ]
+        return [
+            DocumentRef(
+                document_type=document_type,
+                title=title,
+                source=f"mock-edo:{supplier_id}",
+                sha256=hashlib.sha256(
+                    f"{deal_id}:{order_id}:{supplier_id}:{document_type}".encode()
+                ).hexdigest(),
+            )
+            for document_type, title in documents
+        ]
+
+    @staticmethod
+    def _build_lifecycle_events(
+        deal: DealRecord,
+        approval: ApprovalRequest,
+        snapshot: ApprovalSnapshot,
+        order_id: UUID,
+        payment_draft_id: UUID,
+        selected_supplier: str,
+        fulfillment: list[FulfillmentUpdate],
+        documents: list[DocumentRef],
+    ) -> list[DealEvent]:
+        rejected_suppliers = [
+            supplier_id
+            for supplier_id in deal.supplier_ids
+            if supplier_id != selected_supplier
+        ]
+        events = [
+            DealEvent(
+                event_type="approval_snapshot_created",
+                actor="A3:sber",
+                details={
+                    "snapshot_id": str(snapshot.snapshot_id),
+                    "snapshot_hash": snapshot.snapshot_hash,
+                },
+            ),
+            DealEvent(
+                event_type="quote_approved",
+                actor=f"human:{approval.approved_by}",
+                details={
+                    "quote_id": str(approval.quote_id),
+                    "snapshot_hash": snapshot.snapshot_hash,
+                },
+            ),
+            DealEvent(
+                event_type="award_sent",
+                actor="A3:sber",
+                details={
+                    "supplier_id": selected_supplier,
+                    "quote_id": str(approval.quote_id),
+                },
+            ),
+            *[
+                DealEvent(
+                    event_type="supplier_rejected",
+                    actor="A3:sber",
+                    details={"supplier_id": supplier_id},
+                )
+                for supplier_id in rejected_suppliers
+            ],
+            DealEvent(
+                event_type="order_confirmed",
+                actor=f"A2:{selected_supplier}",
+                details={"order_id": str(order_id)},
+            ),
+            DealEvent(
+                event_type="payment_draft_created",
+                actor="A3:sber",
+                details={
+                    "payment_draft_id": str(payment_draft_id),
+                    "status": PaymentDraftStatus.AWAITING_CUSTOMER_CONFIRMATION.value,
+                },
+            ),
+        ]
+        events.extend(
+            DealEvent(
+                event_type="fulfillment_updated",
+                actor=update.actor,
+                details={
+                    "status": update.status.value,
+                    **update.details,
+                },
+            )
+            for update in fulfillment
+        )
+        events.extend(
+            DealEvent(
+                event_type="document_registered",
+                actor="mock-edo",
+                details={
+                    "document_id": str(document.document_id),
+                    "document_type": document.document_type,
+                    "sha256": document.sha256,
+                },
+            )
+            for document in documents
+        )
+        events.append(
+            DealEvent(
+                event_type="deal_completed",
+                actor="A3:sber",
+                details={"order_id": str(order_id)},
+            )
+        )
+        return events
 
 
 __all__ = [

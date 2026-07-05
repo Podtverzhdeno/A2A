@@ -2,6 +2,8 @@ export type DealStatus =
   | "draft"
   | "awaiting_approval"
   | "order_created"
+  | "fulfilling"
+  | "completed"
   | "failed";
 
 export interface Health {
@@ -62,7 +64,66 @@ export interface Comparison {
 export interface DealEvent {
   event_type: string;
   actor: string;
-  details: Record<string, string | number | boolean | null>;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ApprovalSnapshot {
+  snapshot_id: string;
+  quote_id: string;
+  supplier_id: string;
+  supplier_name: string;
+  sku: string;
+  product_name: string;
+  quantity: number;
+  total_cost: string;
+  currency: string;
+  delivery_days: number;
+  warranty_months: number;
+  payment_delay_days: number;
+  ranking_version: string;
+  total_score: string | null;
+  snapshot_hash: string;
+  created_at: string;
+}
+
+export interface OrderState {
+  order_id: string;
+  supplier_id: string;
+  quote_id: string;
+  status: "awarded" | "confirmed_by_supplier";
+  confirmed_at: string | null;
+}
+
+export interface PaymentDraft {
+  payment_draft_id: string;
+  order_id: string;
+  amount: string;
+  currency: string;
+  payee_supplier_id: string;
+  status: "created" | "awaiting_customer_confirmation";
+  created_at: string;
+}
+
+export interface FulfillmentUpdate {
+  status:
+    | "order_confirmed"
+    | "packed"
+    | "shipped"
+    | "delivered"
+    | "documents_ready"
+    | "completed";
+  actor: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DocumentRef {
+  document_id: string;
+  document_type: string;
+  title: string;
+  source: string;
+  sha256: string;
   created_at: string;
 }
 
@@ -99,6 +160,11 @@ export interface Deal {
   selected_quote_id: string | null;
   order_id: string | null;
   payment_draft_id: string | null;
+  approval_snapshot: ApprovalSnapshot | null;
+  order: OrderState | null;
+  payment_draft: PaymentDraft | null;
+  fulfillment: FulfillmentUpdate[];
+  documents: DocumentRef[];
   errors: string[];
   events: DealEvent[];
   created_at: string;
@@ -122,4 +188,5 @@ export interface ApprovalResult {
   selected_quote_id: string;
   order_id: string;
   payment_draft_id: string;
+  approval_snapshot_hash: string;
 }

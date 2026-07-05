@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -19,7 +19,28 @@ class DealStatus(StrEnum):
     DRAFT = "draft"
     AWAITING_APPROVAL = "awaiting_approval"
     ORDER_CREATED = "order_created"
+    FULFILLING = "fulfilling"
+    COMPLETED = "completed"
     FAILED = "failed"
+
+
+class OrderStatus(StrEnum):
+    AWARDED = "awarded"
+    CONFIRMED_BY_SUPPLIER = "confirmed_by_supplier"
+
+
+class PaymentDraftStatus(StrEnum):
+    CREATED = "created"
+    AWAITING_CUSTOMER_CONFIRMATION = "awaiting_customer_confirmation"
+
+
+class FulfillmentStatus(StrEnum):
+    ORDER_CONFIRMED = "order_confirmed"
+    PACKED = "packed"
+    SHIPPED = "shipped"
+    DELIVERED = "delivered"
+    DOCUMENTS_READY = "documents_ready"
+    COMPLETED = "completed"
 
 
 class RankingWeights(BaseModel):
@@ -143,7 +164,60 @@ class Comparison(BaseModel):
 class DealEvent(BaseModel):
     event_type: str
     actor: str
-    details: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ApprovalSnapshot(BaseModel):
+    snapshot_id: UUID = Field(default_factory=uuid4)
+    quote_id: UUID
+    supplier_id: str
+    supplier_name: str
+    sku: str
+    product_name: str
+    quantity: int
+    total_cost: Money
+    currency: str
+    delivery_days: int
+    warranty_months: int
+    payment_delay_days: int
+    ranking_version: str
+    total_score: Score | None = None
+    snapshot_hash: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class OrderState(BaseModel):
+    order_id: UUID
+    supplier_id: str
+    quote_id: UUID
+    status: OrderStatus
+    confirmed_at: datetime | None = None
+
+
+class PaymentDraft(BaseModel):
+    payment_draft_id: UUID
+    order_id: UUID
+    amount: Money
+    currency: str
+    payee_supplier_id: str
+    status: PaymentDraftStatus
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class FulfillmentUpdate(BaseModel):
+    status: FulfillmentStatus
+    actor: str = "A2:supplier"
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class DocumentRef(BaseModel):
+    document_id: UUID = Field(default_factory=uuid4)
+    document_type: str
+    title: str
+    source: str
+    sha256: str
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -158,6 +232,11 @@ class DealRecord(BaseModel):
     selected_quote_id: UUID | None = None
     order_id: UUID | None = None
     payment_draft_id: UUID | None = None
+    approval_snapshot: ApprovalSnapshot | None = None
+    order: OrderState | None = None
+    payment_draft: PaymentDraft | None = None
+    fulfillment: list[FulfillmentUpdate] = Field(default_factory=list)
+    documents: list[DocumentRef] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     events: list[DealEvent] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
@@ -175,6 +254,17 @@ class ApprovalResult(BaseModel):
     selected_quote_id: UUID
     order_id: UUID
     payment_draft_id: UUID
+    approval_snapshot_hash: str
+
+
+class EvidenceBundle(BaseModel):
+    deal: DealRecord
+    events: list[DealEvent]
+    approval_snapshot: ApprovalSnapshot | None
+    order: OrderState | None
+    payment_draft: PaymentDraft | None
+    fulfillment: list[FulfillmentUpdate]
+    documents: list[DocumentRef]
 
 
 class ParseIntentRequest(BaseModel):

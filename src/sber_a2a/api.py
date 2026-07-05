@@ -20,6 +20,7 @@ from sber_a2a.domain.models import (
     DealEvent,
     DealRecord,
     DealStatus,
+    EvidenceBundle,
     Organization,
     ParsedIntentDraft,
     ParseIntentRequest,
@@ -153,6 +154,25 @@ def create_app(container: Container | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Deal not found") from exc
 
     @app.get(
+        "/api/v1/deals/{deal_id}/evidence",
+        response_model=EvidenceBundle,
+    )
+    async def get_deal_evidence(deal_id: UUID) -> EvidenceBundle:
+        try:
+            deal = await container.deals.get(deal_id)
+        except DealNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Deal not found") from exc
+        return EvidenceBundle(
+            deal=deal,
+            events=deal.events,
+            approval_snapshot=deal.approval_snapshot,
+            order=deal.order,
+            payment_draft=deal.payment_draft,
+            fulfillment=deal.fulfillment,
+            documents=deal.documents,
+        )
+
+    @app.get(
         "/api/v1/deals/{deal_id}/events/stream",
         response_class=StreamingResponse,
     )
@@ -184,6 +204,8 @@ def create_app(container: Container | None = None) -> FastAPI:
                 if deal.status in {
                     DealStatus.AWAITING_APPROVAL,
                     DealStatus.ORDER_CREATED,
+                    DealStatus.FULFILLING,
+                    DealStatus.COMPLETED,
                     DealStatus.FAILED,
                 }:
                     yield "event: stream_complete\ndata: {}\n\n"

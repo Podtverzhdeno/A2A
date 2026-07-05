@@ -75,10 +75,17 @@ async def test_rest_deal_flow(container, deal_request) -> None:
                 "approved_by": "approver-1",
             },
         )
+        evidence = await client.get(
+            f"/api/v1/deals/{payload['deal_id']}/evidence"
+        )
         history = await client.get("/api/v1/deals")
 
     assert approved.status_code == 200
-    assert approved.json()["status"] == "order_created"
+    assert approved.json()["status"] == "completed"
+    assert evidence.status_code == 200
+    assert evidence.json()["approval_snapshot"]["snapshot_hash"]
+    assert evidence.json()["fulfillment"][-1]["status"] == "completed"
+    assert len(evidence.json()["documents"]) == 3
     assert history.status_code == 200
     assert any(item["deal_id"] == payload["deal_id"] for item in history.json())
 

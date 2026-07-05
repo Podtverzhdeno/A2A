@@ -19,7 +19,8 @@ Frontend → A1 REST
 A1 → A3 A2A Task + structured data part
 A3 → A2.1/A2.2/A2.3 A2A Task + RFQ data part
 A2 → A3 Quote Artifact
-A3 → A1 persisted deal state + SSE events
+A3 → selected A2 demo Award + others Rejection
+A3 → A1 persisted deal state + SSE events + evidence bundle
 ```
 
 Agent Card, JSON-RPC route, Task, status update и Artifact создаются официальным
@@ -33,7 +34,9 @@ SQL-хранилище содержит:
 - отдельный append-only Deal Ledger;
 - организации;
 - регистрации внешних агентов;
-- snapshot Agent Card.
+- snapshot Agent Card;
+- approval snapshot, order/payment draft, fulfillment и document refs внутри
+  payload сделки.
 
 Alembic применяет миграции до запуска A3 в Docker Compose. Незавершённые сделки
 в статусе `draft` повторно ставятся в выполнение после старта A3.
@@ -62,6 +65,8 @@ GET  /api/v1/admin/agents
 - supplier catalog → сейчас mock-каталог внутри соответствующего A2;
 - identity → сейчас явно обозначенный demo identity header;
 - payment → создаётся только `PaymentDraft`;
+- documents/EDO → mock `DocumentRef` с hash;
+- fulfillment → demo timeline статусов после award;
 - OpenRouter/GigaChat → необязательный `LanguageModelService`.
 
 Mock order/payment и risk не находятся внутри workflow: будущие production-
@@ -105,6 +110,11 @@ GIGACHAT_SCOPE=...
 - доверенный supplier risk со стороны A3;
 - повторное подтверждение возвращает существующий заказ;
 - один `order_id` и один `payment_draft_id` на сделку;
+- approval snapshot hash фиксирует существенные условия;
+- выбранный A2 получает demo award, остальные получают rejection event;
+- mock fulfillment доводит сделку до `completed`;
+- evidence endpoint выгружает сделку, ledger, snapshot, order, payment draft,
+  fulfillment и документы;
 - URL сделки восстанавливается после обновления браузера.
 
 ## Осознанные mock-границы
