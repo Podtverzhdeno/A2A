@@ -247,11 +247,10 @@ def create_app(container: Container | None = None) -> FastAPI:
             status_code=503,
         )
 
-    attach_a3_a2a_routes(
-        app,
-        container,
-        public_url=f"http://{container.settings.app_host}:{container.settings.app_port}",
+    public_url = container.settings.public_url or (
+        f"http://{container.settings.app_host}:{container.settings.app_port}"
     )
+    attach_a3_a2a_routes(app, container, public_url=public_url)
     app.mount("/mcp", mcp_app, name="mcp")
     return app
 

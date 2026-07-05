@@ -55,6 +55,7 @@ services:
     environment:
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
+      PUBLIC_URL: http://a3:8000
       DATABASE_URL: postgresql+asyncpg://a2a:a2a-demo-password@postgres:5432/a2a
       SUPPLIER_MODE: remote
       SUPPLIER_ENDPOINTS: supplier-a=http://a2-1:8201,supplier-b=http://a2-2:8202,supplier-c=http://a2-3:8203

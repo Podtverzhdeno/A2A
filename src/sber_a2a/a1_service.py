@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 import httpx
 from a2a.client import ClientCallContext, ClientConfig, ClientFactory
+from a2a.client.errors import A2AClientError
 from a2a.server.routes import add_a2a_routes_to_fastapi, create_agent_card_routes
 from a2a.types.a2a_pb2 import (
     AgentCapabilities,
@@ -154,7 +155,7 @@ def create_a1_app(a3_url: str | None = None) -> FastAPI:
                 response = await http.get(f"{a3_url}/api/v1/deals/{deal_id}")
                 response.raise_for_status()
                 return DealRecord.model_validate(response.json())
-        except (httpx.HTTPError, ValueError) as exc:
+        except (A2AClientError, httpx.HTTPError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/api/v1/deals", response_model=list[DealRecord])

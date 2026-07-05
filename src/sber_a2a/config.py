@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     app_name: str = "Sber A2A Procurement MVP"
     app_host: str = "127.0.0.1"
     app_port: int = 8000
+    public_url: str | None = None
     log_level: str = "INFO"
     database_url: str = "sqlite+aiosqlite:///./data/a2a.db"
     supplier_mode: str = "embedded"

@@ -3,6 +3,8 @@ import asyncio
 from httpx import ASGITransport, AsyncClient
 
 from sber_a2a.api import create_app
+from sber_a2a.config import Settings
+from sber_a2a.container import build_container
 
 
 async def test_health_and_agent_card(container) -> None:
@@ -23,6 +25,28 @@ async def test_health_and_agent_card(container) -> None:
     }
     assert card.status_code == 200
     assert card.json()["name"] == "Sber A3 Procurement Agent"
+
+
+async def test_agent_card_uses_configured_public_url() -> None:
+    container = build_container(
+        Settings(
+            llm_provider="disabled",
+            database_url="sqlite+aiosqlite:///:memory:",
+            app_host="0.0.0.0",
+            public_url="http://a3:8000",
+            _env_file=None,
+        )
+    )
+    app = create_app(container)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        card = await client.get("/.well-known/agent-card.json")
+
+    interfaces = card.json()["supportedInterfaces"]
+    assert interfaces[0]["url"] == "http://a3:8000/a2a"
+    assert interfaces[1]["url"] == "http://a3:8000"
 
 
 async def test_rest_deal_flow(container, deal_request) -> None:
