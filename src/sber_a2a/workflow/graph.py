@@ -67,7 +67,22 @@ def build_procurement_graph(
         return {
             "errors": errors,
             "events": state["events"]
-            + [_event("mandate_validated", {"valid": not errors})],
+            + [
+                _event(
+                    "mandate_validated",
+                    {
+                        "target": "policy-engine",
+                        "message_type": "sber.procurement.mandate_check.v1",
+                        "valid": not errors,
+                        "payload_summary": {
+                            "mandate_id": str(mandate.mandate_id),
+                            "authorized_by": mandate.authorized_by,
+                            "category": intent.product.category,
+                            "max_total": str(mandate.max_total),
+                        },
+                    },
+                )
+            ],
         }
 
     def route_after_validation(state: WorkflowState) -> Literal["discover", "finalize"]:
@@ -90,7 +105,17 @@ def build_procurement_graph(
             "supplier_ids": supplier_ids,
             "errors": errors,
             "events": state["events"]
-            + [_event("suppliers_discovered", {"count": len(supplier_ids)})],
+            + [
+                _event(
+                    "suppliers_discovered",
+                    {
+                        "target": "agent-registry",
+                        "message_type": "sber.procurement.supplier_discovery.v1",
+                        "count": len(supplier_ids),
+                        "supplier_ids": supplier_ids,
+                    },
+                )
+            ],
         }
 
     def route_after_discovery(state: WorkflowState) -> Literal["request_quotes", "finalize"]:
@@ -108,7 +133,18 @@ def build_procurement_graph(
             *[
                 _event(
                     "rfq_sent",
-                    {"supplier_id": agent.summary.supplier_id},
+                    {
+                        "target": f"A2:{agent.summary.supplier_id}",
+                        "message_type": "sber.procurement.rfq.v1",
+                        "supplier_id": agent.summary.supplier_id,
+                        "payload_summary": {
+                            "sku": intent.product.sku,
+                            "quantity": intent.product.quantity,
+                            "category": intent.product.category,
+                            "delivery_city": intent.delivery_city,
+                            "delivery_by": str(intent.delivery_by),
+                        },
+                    },
                 )
                 for agent in agents
             ],
@@ -125,6 +161,8 @@ def build_procurement_graph(
                     _event(
                         "supplier_request_failed",
                         {
+                            "target": "A3:sber",
+                            "message_type": "sber.procurement.quote.v1",
                             "supplier_id": agent.summary.supplier_id,
                             "error_type": type(result).__name__,
                         },
@@ -136,8 +174,16 @@ def build_procurement_graph(
                     _event(
                         "quote_received",
                         {
+                            "target": "A3:sber",
+                            "message_type": "sber.procurement.quote.v1",
                             "supplier_id": agent.summary.supplier_id,
                             "quote_id": str(result.quote_id),
+                            "payload_summary": {
+                                "total_cost": str(result.total_cost),
+                                "currency": result.currency,
+                                "delivery_days": result.delivery_days,
+                                "warranty_months": result.warranty_months,
+                            },
                         },
                         actor=f"A2:{agent.summary.supplier_id}",
                     )
@@ -154,7 +200,12 @@ def build_procurement_graph(
                 *events,
                 _event(
                     "quotes_collected",
-                    {"requested": len(agents), "received": len(quotes)},
+                    {
+                        "target": "A3:sber",
+                        "message_type": "sber.procurement.quote_batch.v1",
+                        "requested": len(agents),
+                        "received": len(quotes),
+                    },
                 )
             ],
         }
@@ -185,9 +236,16 @@ def build_procurement_graph(
                 _event(
                     "quotes_ranked",
                     {
+                        "target": "A1:client",
+                        "message_type": "sber.procurement.comparison.v1",
                         "eligible": sum(
                             item.eligible for item in comparison.evaluated_quotes
-                        )
+                        ),
+                        "recommended_quote_id": (
+                            str(comparison.recommended_quote_id)
+                            if comparison.recommended_quote_id
+                            else None
+                        ),
                     },
                 )
             ],
@@ -200,7 +258,16 @@ def build_procurement_graph(
         return {
             "comparison": comparison.model_dump(mode="json"),
             "events": state["events"]
-            + [_event("comparison_explained", {"llm_used": llm.enabled})],
+            + [
+                _event(
+                    "comparison_explained",
+                    {
+                        "target": "A1:client",
+                        "message_type": "sber.procurement.explanation.v1",
+                        "llm_used": llm.enabled,
+                    },
+                )
+            ],
         }
 
     def route_after_ranking(state: WorkflowState) -> Literal["explain", "finalize"]:
@@ -225,7 +292,16 @@ def build_procurement_graph(
         return {
             "status": status.value,
             "events": state["events"]
-            + [_event("workflow_completed", {"status": status.value})],
+            + [
+                _event(
+                    "workflow_completed",
+                    {
+                        "target": "A1:client",
+                        "message_type": "sber.procurement.workflow_status.v1",
+                        "status": status.value,
+                    },
+                )
+            ],
         }
 
     builder = StateGraph(WorkflowState)

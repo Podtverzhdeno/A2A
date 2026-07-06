@@ -195,7 +195,66 @@ class SQLAlchemyDealStore:
                 return
             async with self._engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
+                await connection.run_sync(self._ensure_compatible_schema)
             self._initialized = True
+
+    @staticmethod
+    def _ensure_compatible_schema(connection) -> None:
+        dialect = connection.dialect.name
+        if dialect not in {"sqlite", "postgresql"}:
+            return
+
+        def columns(table_name: str) -> set[str]:
+            if dialect == "sqlite":
+                rows = connection.exec_driver_sql(
+                    f"PRAGMA table_info({table_name})"
+                ).mappings()
+                return {row["name"] for row in rows}
+            rows = connection.exec_driver_sql(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = :table_name
+                """,
+                {"table_name": table_name},
+            ).mappings()
+            return {row["column_name"] for row in rows}
+
+        def add_column(table_name: str, column_name: str, column_sql: str) -> None:
+            existing = columns(table_name)
+            if column_name not in existing:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_sql}"
+                )
+
+        event_columns = columns("deal_events")
+        if event_columns:
+            add_column("deal_events", "event_uuid", "event_uuid VARCHAR(36)")
+            add_column("deal_events", "correlation_id", "correlation_id VARCHAR(36)")
+            add_column("deal_events", "causation_id", "causation_id VARCHAR(36)")
+            add_column("deal_events", "message_id", "message_id VARCHAR(36)")
+            add_column("deal_events", "payload_hash", "payload_hash VARCHAR(64)")
+            connection.exec_driver_sql(
+                """
+                UPDATE deal_events
+                SET event_uuid = '00000000-0000-4000-8000-000000000003'
+                WHERE event_uuid IS NULL
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                UPDATE deal_events
+                SET correlation_id = '00000000-0000-4000-8000-000000000001'
+                WHERE correlation_id IS NULL
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                UPDATE deal_events
+                SET message_id = '00000000-0000-4000-8000-000000000002'
+                WHERE message_id IS NULL
+                """
+            )
 
     async def close(self) -> None:
         await self._engine.dispose()

@@ -1279,6 +1279,75 @@ dd {
   font-size: 7px;
 }
 
+.event-route {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #b8cbc3;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 8px;
+}
+
+.event-route span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-route i {
+  width: 18px;
+  height: 1px;
+  position: relative;
+  flex: 0 0 auto;
+  background: rgb(32 212 123 / 45%);
+}
+
+.event-route i::after {
+  content: "";
+  width: 4px;
+  height: 4px;
+  position: absolute;
+  top: -2px;
+  right: 0;
+  border-top: 1px solid var(--green);
+  border-right: 1px solid var(--green);
+  transform: rotate(45deg);
+}
+
+.detail-grid {
+  margin: 7px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.detail-grid div {
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid rgb(38 53 47 / 80%);
+  border-radius: 6px;
+  background: rgb(9 16 14 / 34%);
+}
+
+.detail-grid dt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #60736a;
+  font-size: 7px;
+}
+
+.detail-grid dd {
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #9fc5b5;
+  font-size: 8px;
+}
+
 .timeline-item.pending .timeline-marker {
   animation: pulse 1s ease infinite;
 }

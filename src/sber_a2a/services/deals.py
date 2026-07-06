@@ -74,7 +74,19 @@ class DealService:
                 DealEvent(
                     event_type="deal_created",
                     actor="A1:client",
-                    details={"deal_id": str(deal_id)},
+                    details={
+                        "target": "A3:sber",
+                        "message_type": "sber.procurement.intent.v1",
+                        "deal_id": str(deal_id),
+                        "payload_summary": {
+                            "customer_id": request.intent.customer_id,
+                            "sku": request.intent.product.sku,
+                            "quantity": request.intent.product.quantity,
+                            "delivery_city": request.intent.delivery_city,
+                            "delivery_by": str(request.intent.delivery_by),
+                            "max_total": str(request.intent.max_total),
+                        },
+                    },
                 )
             ],
         )
@@ -381,6 +393,8 @@ class DealService:
                 event_type="approval_snapshot_created",
                 actor="A3:sber",
                 details={
+                    "target": f"human:{approval.approved_by}",
+                    "message_type": "sber.procurement.approval_snapshot.v1",
                     "snapshot_id": str(snapshot.snapshot_id),
                     "snapshot_hash": snapshot.snapshot_hash,
                 },
@@ -389,6 +403,8 @@ class DealService:
                 event_type="quote_approved",
                 actor=f"human:{approval.approved_by}",
                 details={
+                    "target": "A3:sber",
+                    "message_type": "sber.procurement.approval.v1",
                     "quote_id": str(approval.quote_id),
                     "snapshot_hash": snapshot.snapshot_hash,
                 },
@@ -397,6 +413,8 @@ class DealService:
                 event_type="award_sent",
                 actor="A3:sber",
                 details={
+                    "target": f"A2:{selected_supplier}",
+                    "message_type": "sber.procurement.award.v1",
                     "supplier_id": selected_supplier,
                     "quote_id": str(approval.quote_id),
                 },
@@ -405,19 +423,29 @@ class DealService:
                 DealEvent(
                     event_type="supplier_rejected",
                     actor="A3:sber",
-                    details={"supplier_id": supplier_id},
+                    details={
+                        "target": f"A2:{supplier_id}",
+                        "message_type": "sber.procurement.rejection.v1",
+                        "supplier_id": supplier_id,
+                    },
                 )
                 for supplier_id in rejected_suppliers
             ],
             DealEvent(
                 event_type="order_confirmed",
                 actor=f"A2:{selected_supplier}",
-                details={"order_id": str(order_id)},
+                details={
+                    "target": "A3:sber",
+                    "message_type": "sber.procurement.order_confirmation.v1",
+                    "order_id": str(order_id),
+                },
             ),
             DealEvent(
                 event_type="payment_draft_created",
                 actor="A3:sber",
                 details={
+                    "target": "payment-adapter",
+                    "message_type": "sber.procurement.payment_draft.v1",
                     "payment_draft_id": str(payment_draft_id),
                     "status": PaymentDraftStatus.AWAITING_CUSTOMER_CONFIRMATION.value,
                 },
@@ -428,6 +456,8 @@ class DealService:
                 event_type="fulfillment_updated",
                 actor=update.actor,
                 details={
+                    "target": "A3:sber",
+                    "message_type": "sber.procurement.fulfillment.v1",
                     "status": update.status.value,
                     **update.details,
                 },
@@ -439,6 +469,8 @@ class DealService:
                 event_type="document_registered",
                 actor="mock-edo",
                 details={
+                    "target": "A3:sber",
+                    "message_type": "sber.procurement.document_ref.v1",
                     "document_id": str(document.document_id),
                     "document_type": document.document_type,
                     "sha256": document.sha256,
@@ -450,7 +482,11 @@ class DealService:
             DealEvent(
                 event_type="deal_completed",
                 actor="A3:sber",
-                details={"order_id": str(order_id)},
+                details={
+                    "target": "A1:client",
+                    "message_type": "sber.procurement.deal_summary.v1",
+                    "order_id": str(order_id),
+                },
             )
         )
         return events

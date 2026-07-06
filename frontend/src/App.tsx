@@ -89,6 +89,45 @@ function shortId(value: string | null | undefined): string {
   return value ? `${value.slice(0, 8)}…${value.slice(-4)}` : "—";
 }
 
+function detailValue(value: unknown): string {
+  if (value === null || value === undefined) return "-";
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function eventTarget(event: DealEvent): string {
+  const target = event.details.target;
+  return typeof target === "string" ? target : "internal";
+}
+
+function eventMessageType(event: DealEvent): string {
+  const messageType = event.details.message_type;
+  return typeof messageType === "string" ? messageType : event.event_type;
+}
+
+function visibleDetails(details: Record<string, unknown>): Record<string, unknown> {
+  const payloadSummary = details.payload_summary;
+  const flat = Object.fromEntries(
+    Object.entries(details).filter(
+      ([key]) => !["target", "message_type", "payload_summary"].includes(key)
+    )
+  );
+  if (
+    payloadSummary &&
+    typeof payloadSummary === "object" &&
+    !Array.isArray(payloadSummary)
+  ) {
+    return { ...flat, ...(payloadSummary as Record<string, unknown>) };
+  }
+  return flat;
+}
+
 function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [suppliers, setSuppliers] = useState<SupplierSummary[]>([]);
@@ -949,9 +988,14 @@ function EventLedger({
               <time>{formatTime(event.created_at)}</time>
               <div className="event-title">
                 <strong>{EVENT_LABELS[event.event_type] ?? event.event_type}</strong>
-                <span>{event.actor}</span>
+                <span>{eventMessageType(event)}</span>
               </div>
-              <code>{JSON.stringify(event.details)}</code>
+              <div className="event-route">
+                <span>{event.actor}</span>
+                <i />
+                <span>{eventTarget(event)}</span>
+              </div>
+              <DetailGrid details={visibleDetails(event.details)} />
             </div>
           </article>
         ))}
@@ -966,6 +1010,23 @@ function EventLedger({
         )}
       </div>
     </div>
+  );
+}
+
+function DetailGrid({ details }: { details: Record<string, unknown> }) {
+  const entries = Object.entries(details);
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <dl className="detail-grid">
+      {entries.map(([key, value]) => (
+        <div key={key}>
+          <dt>{key}</dt>
+          <dd title={detailValue(value)}>{detailValue(value)}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

@@ -1,12 +1,17 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import httpx
 
 from sber_a2a.domain.models import (
+    AgentContractCheckResult,
+    AgentContractStatus,
     AgentRegistration,
     AgentRegistrationStatus,
     CreateOrganizationRequest,
     Organization,
+    ProcurementIntent,
+    ProductRequest,
     RegisterSupplierAgentRequest,
     UpdateAgentStatusRequest,
 )
@@ -46,15 +51,27 @@ class AgentOnboardingService:
     ) -> AgentRegistration:
         await self._store.get_organization(request.organization_id)
         card = await self._load_agent_card(request.endpoint_url)
+        checked_at = datetime.now(UTC)
         registration = AgentRegistration(
             organization_id=request.organization_id,
             agent_id=request.agent_id,
             endpoint_url=request.endpoint_url.rstrip("/"),
             categories=request.categories,
             hosting_mode=request.hosting_mode,
-            status=AgentRegistrationStatus.ACTIVE,
+            status=AgentRegistrationStatus.PENDING,
             agent_card_snapshot=card,
-            last_checked_at=datetime.now(UTC),
+            last_checked_at=checked_at,
+        )
+        result = await self._check_agent_contract(registration)
+        if result.status is not AgentContractStatus.PASSED:
+            raise ValueError(result.message)
+        registration = registration.model_copy(
+            update={
+                "status": AgentRegistrationStatus.ACTIVE,
+                "contract_status": result.status,
+                "contract_error": None,
+                "last_checked_at": result.checked_at,
+            }
         )
         await self._store.put_agent_registration(registration)
         self._registry.register(self._to_remote_agent(registration))
@@ -76,6 +93,19 @@ class AgentOnboardingService:
         if registration is None:
             raise DealNotFoundError(agent_id)
         updated = registration.model_copy(update={"status": request.status})
+        if request.status is AgentRegistrationStatus.ACTIVE:
+            card = await self._load_agent_card(updated.endpoint_url)
+            updated = updated.model_copy(update={"agent_card_snapshot": card})
+            result = await self._check_agent_contract(updated)
+            if result.status is not AgentContractStatus.PASSED:
+                raise ValueError(result.message)
+            updated = updated.model_copy(
+                update={
+                    "contract_status": result.status,
+                    "contract_error": None,
+                    "last_checked_at": result.checked_at,
+                }
+            )
         await self._store.put_agent_registration(updated)
         if request.status is AgentRegistrationStatus.ACTIVE:
             self._registry.register(self._to_remote_agent(updated))
@@ -83,9 +113,43 @@ class AgentOnboardingService:
             self._registry.unregister(agent_id)
         return updated
 
+    async def check_agent(self, agent_id: str) -> AgentContractCheckResult:
+        registrations = await self._store.list_agent_registrations()
+        registration = next(
+            (item for item in registrations if item.agent_id == agent_id),
+            None,
+        )
+        if registration is None:
+            raise DealNotFoundError(agent_id)
+        try:
+            card = await self._load_agent_card(registration.endpoint_url)
+            registration = registration.model_copy(update={"agent_card_snapshot": card})
+            result = await self._check_agent_contract(registration)
+        except (httpx.HTTPError, ValueError, TimeoutError) as exc:
+            result = AgentContractCheckResult(
+                agent_id=registration.agent_id,
+                endpoint_url=registration.endpoint_url,
+                status=AgentContractStatus.FAILED,
+                message=str(exc),
+            )
+        updated = registration.model_copy(
+            update={
+                "contract_status": result.status,
+                "contract_error": (
+                    None if result.status is AgentContractStatus.PASSED else result.message
+                ),
+                "last_checked_at": result.checked_at,
+            }
+        )
+        await self._store.put_agent_registration(updated)
+        return result
+
     async def restore(self) -> None:
         for registration in await self._store.list_agent_registrations():
-            if registration.status is AgentRegistrationStatus.ACTIVE:
+            if (
+                registration.status is AgentRegistrationStatus.ACTIVE
+                and registration.contract_status is AgentContractStatus.PASSED
+            ):
                 self._registry.register(self._to_remote_agent(registration))
 
     async def _load_agent_card(self, endpoint: str) -> dict:
@@ -101,7 +165,48 @@ class AgentOnboardingService:
         )
         if not interfaces:
             raise ValueError("Agent Card has no supported interfaces")
+        skills = card.get("skills") or []
+        if not any(skill.get("id") == "procurement-rfq" for skill in skills):
+            raise ValueError("Agent Card has no procurement-rfq skill")
         return card
+
+    async def _check_agent_contract(
+        self,
+        registration: AgentRegistration,
+    ) -> AgentContractCheckResult:
+        intent = ProcurementIntent(
+            customer_id="contract-check",
+            product=ProductRequest(
+                sku="BEARING-6205-2RS",
+                name="Contract check item",
+                category=next(iter(registration.categories), "mro.standardized"),
+                quantity=1,
+            ),
+            delivery_city="Moscow",
+            delivery_by=date.today() + timedelta(days=14),
+            max_total=Decimal("100000.00"),
+        )
+        agent = self._to_remote_agent(registration)
+        try:
+            quote = await agent.create_quote(intent)
+        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+            return AgentContractCheckResult(
+                agent_id=registration.agent_id,
+                endpoint_url=registration.endpoint_url,
+                status=AgentContractStatus.FAILED,
+                message=f"A2A RFQ contract check failed: {exc}",
+            )
+        return AgentContractCheckResult(
+            agent_id=registration.agent_id,
+            endpoint_url=registration.endpoint_url,
+            status=AgentContractStatus.PASSED,
+            quote_received=quote is not None,
+            message=(
+                "A2A RFQ contract check passed with quote artifact"
+                if quote is not None
+                else "A2A RFQ contract check passed with no_quote artifact"
+            ),
+        )
 
     def _to_remote_agent(
         self,

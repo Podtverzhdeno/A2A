@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sber_a2a.a2a_gateway import attach_a3_a2a_routes
 from sber_a2a.container import Container, build_container
 from sber_a2a.domain.models import (
+    AgentContractCheckResult,
     AgentRegistration,
     ApprovalRequest,
     ApprovalResult,
@@ -144,6 +145,18 @@ def create_app(container: Container | None = None) -> FastAPI:
     ) -> AgentRegistration:
         try:
             return await container.onboarding.update_agent_status(agent_id, request)
+        except DealNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Agent not found") from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/admin/agents/{agent_id}/check",
+        response_model=AgentContractCheckResult,
+    )
+    async def check_registered_agent(agent_id: str) -> AgentContractCheckResult:
+        try:
+            return await container.onboarding.check_agent(agent_id)
         except DealNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Agent not found") from exc
 

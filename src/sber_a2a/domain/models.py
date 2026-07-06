@@ -344,6 +344,21 @@ class UpdateAgentStatusRequest(BaseModel):
     status: AgentRegistrationStatus
 
 
+class AgentContractStatus(StrEnum):
+    UNKNOWN = "unknown"
+    PASSED = "passed"
+    FAILED = "failed"
+
+
+class AgentContractCheckResult(BaseModel):
+    agent_id: str
+    endpoint_url: str
+    status: AgentContractStatus
+    quote_received: bool = False
+    message: str
+    checked_at: datetime = Field(default_factory=utc_now)
+
+
 class AgentHostingMode(StrEnum):
     MANAGED = "managed"
     EXTERNAL = "external"
@@ -381,6 +396,8 @@ class AgentRegistration(BaseModel):
     categories: set[str]
     hosting_mode: AgentHostingMode
     status: AgentRegistrationStatus
+    contract_status: AgentContractStatus = AgentContractStatus.UNKNOWN
+    contract_error: str | None = None
     agent_card_snapshot: dict
     last_checked_at: datetime
     created_at: datetime = Field(default_factory=utc_now)

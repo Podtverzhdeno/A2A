@@ -1,6 +1,8 @@
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from sber_a2a.domain.models import ProcurementIntent, Quote, SupplierSummary
 from sber_a2a.suppliers.base import SupplierAgent
@@ -24,11 +26,13 @@ class MockSupplierAgent:
         supplier_id: str,
         name: str,
         catalog: dict[str, CatalogItem],
+        *,
+        categories: set[str] | None = None,
     ) -> None:
         self._summary = SupplierSummary(
             supplier_id=supplier_id,
             name=name,
-            categories={"mro.standardized"},
+            categories=categories or {"mro.standardized"},
         )
         self._catalog = catalog
 
@@ -157,6 +161,33 @@ def build_demo_agents() -> list[MockSupplierAgent]:
 
 def build_demo_registry() -> SupplierRegistry:
     return SupplierRegistry(build_demo_agents())
+
+
+def load_catalog_supplier(
+    supplier_id: str,
+    catalog_file: str | Path,
+) -> MockSupplierAgent:
+    payload = json.loads(Path(catalog_file).read_text(encoding="utf-8"))
+    categories = set(payload.get("categories") or {"mro.standardized"})
+    catalog = {
+        item["sku"]: CatalogItem(
+            sku=item["sku"],
+            name=item["name"],
+            unit_price=Decimal(str(item["unit_price"])),
+            delivery_fee=Decimal(str(item.get("delivery_fee", "0.00"))),
+            delivery_days=int(item["delivery_days"]),
+            warranty_months=int(item["warranty_months"]),
+            supplier_risk=Decimal(str(item.get("supplier_risk", "0.50"))),
+            payment_delay_days=int(item.get("payment_delay_days", 0)),
+        )
+        for item in payload["items"]
+    }
+    return MockSupplierAgent(
+        supplier_id,
+        payload.get("name", supplier_id),
+        catalog,
+        categories=categories,
+    )
 
 
 def get_demo_agent(supplier_id: str) -> MockSupplierAgent:

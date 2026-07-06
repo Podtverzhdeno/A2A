@@ -30,7 +30,11 @@ from google.protobuf.struct_pb2 import Struct, Value
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from sber_a2a.domain.models import ProcurementIntent
-from sber_a2a.suppliers.mock import MockSupplierAgent, get_demo_agent
+from sber_a2a.suppliers.mock import (
+    MockSupplierAgent,
+    get_demo_agent,
+    load_catalog_supplier,
+)
 
 
 def _now() -> Timestamp:
@@ -137,7 +141,12 @@ def create_supplier_app(
         "PUBLIC_URL",
         f"http://127.0.0.1:{port}",
     )
-    supplier = get_demo_agent(supplier_id)
+    catalog_file = os.getenv("SUPPLIER_CATALOG_FILE")
+    supplier = (
+        load_catalog_supplier(supplier_id, catalog_file)
+        if catalog_file
+        else get_demo_agent(supplier_id)
+    )
     card = AgentCard(
         name=supplier.summary.name,
         description=f"Demo A2 supplier agent owned by {supplier.summary.name}",
